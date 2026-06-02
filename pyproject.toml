@@ -1,0 +1,182 @@
+[build-system]
+requires = ["setuptools>=80", "setuptools-scm[simple]>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiospinel"
+dynamic = ["version"]
+description = "Asyncio implementation of the Spinel protocol for OpenThread RCPs"
+authors = [{ name = "puddly", email = "puddly3@gmail.com" }]
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = ["typing-extensions"]
+
+[project.urls]
+repository = "https://github.com/NabuCasa/aiospinel"
+
+[project.optional-dependencies]
+dev = [
+  "uv>=0.11.14",
+  "ruff>=0.14.6",
+  "mypy>=2.1.0",
+  "codespell>=2.4.2",
+  "pytest>=9.0.1",
+  "prek>=0.3.11",
+  "pytest-asyncio>=1.3.0",
+  "pytest-timeout>=2.4.0",
+  "pytest-cov>=4.1.0",
+  "types-setuptools>=82.0.0.20260508",
+]
+
+[tool.setuptools.packages.find]
+include = ["aiospinel", "aiospinel.*"]
+
+[tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+addopts = "--showlocals --verbose"
+testpaths = ["tests"]
+timeout = 20
+log_format = "%(asctime)s.%(msecs)03d %(levelname)s %(message)s"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+check_untyped_defs = true
+show_error_codes = true
+show_error_context = true
+warn_unreachable = true
+disallow_any_expr = false
+disallow_any_decorated = false
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disable_error_code = [
+  "abstract",
+  "no-untyped-call",
+  "no-untyped-def",
+  "redundant-expr",
+  "unreachable",
+  "untyped-decorator",
+]
+
+[tool.coverage.run]
+source = ["aiospinel"]
+relative_files = true
+
+[tool.coverage.paths]
+source = ["aiospinel/", "aiospinel\\"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+  "B002",    # Python does not support the unary prefix increment
+  "B007",    # Loop control variable {name} not used within loop body
+  "B014",    # Exception handler with duplicate exception
+  "B023",    # Function definition does not bind loop variable {name}
+  "B026",    # Star-arg unpacking after a keyword argument is strongly discouraged
+  "B904",    # Use raise from to specify exception cause
+  "C",       # complexity
+  "COM818",  # Trailing comma on bare tuple prohibited
+  "DTZ003",  # Use datetime.now(tz=) instead of datetime.utcnow()
+  "DTZ004",  # Use datetime.fromtimestamp(ts, tz=) instead of datetime.utcfromtimestamp(ts)
+  "E",       # pycodestyle
+  "F",       # pyflakes/autoflake
+  "G",       # flake8-logging-format
+  "I",       # isort
+  "ICN001",  # import conventions; {name} should be imported as {asname}
+  "N804",    # First argument of a class method should be named cls
+  "N805",    # First argument of a method should be named self
+  "N815",    # Variable {name} in class scope should not be mixedCase
+  "PERF101", # Do not cast an iterable to list before iterating over it
+  "PERF102", # When using only the {subset} of a dict use the {subset}() method
+  "PERF203", # try-except within a loop incurs performance overhead
+  "PGH004",  # Use specific rule codes when using noqa
+  "PLC0414", # Useless import alias. Import alias does not rename original package.
+  "PLC",     # pylint
+  "PLE",     # pylint
+  "PLR",     # pylint
+  "PLW",     # pylint
+  "Q000",    # Double quotes found but single quotes preferred
+  "RUF006",  # Store a reference to the return value of asyncio.create_task
+  "SIM",     # flake8-simplify
+  "T100",    # Trace found: {name} used
+  "T20",     # flake8-print
+  "TID251",  # Banned imports
+  "TRY",     # tryceratops
+  "UP",      # pyupgrade
+  "W",       # pycodestyle
+]
+
+ignore = [
+  "E501", # line too long
+  "E731", # do not assign a lambda expression, use a def
+
+  # False positives https://github.com/astral-sh/ruff/issues/5386
+  "PLC0208", # Use a sequence type instead of a `set` when iterating over values
+  "PLR0911", # Too many return statements ({returns} > {max_returns})
+  "PLR0912", # Too many branches ({branches} > {max_branches})
+  "PLR0913", # Too many arguments to function call ({c_args} > {max_args})
+  "PLR0915", # Too many statements ({statements} > {max_statements})
+  "PLR2004", # Magic value used in comparison, consider replacing {value} with a constant variable
+  "PLW2901", # Outer {outer_kind} variable {name} overwritten by inner {inner_kind} target
+  "UP006",   # keep type annotation style as is
+  "UP007",   # keep type annotation style as is
+
+  # Ignored due to incompatible with mypy: https://github.com/python/mypy/issues/15238
+  "UP040", # Checks for use of TypeAlias annotation for declaring type aliases.
+
+  # May conflict with the formatter, https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules
+  "W191",
+  "E111",
+  "E114",
+  "E117",
+  "Q000",
+  "Q",
+  "COM812",
+  "COM819",
+  "ISC001",
+  "ISC002",
+
+  "TRY003",
+  "TRY201",
+  "TRY300",
+
+  "SIM103", # Return the condition {condition} directly
+]
+
+extend-safe-fixes = ["F401"]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+
+[tool.ruff.lint.flake8-tidy-imports]
+# Disallow all relative imports.
+ban-relative-imports = "all"
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["aiospinel", "tests"]
+combine-as-imports = true
+split-on-trailing-comma = false
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+  "SIM117", # Nested `with` statements are often more readable
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.codespell]
+skip = "tests/data/*"
