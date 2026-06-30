@@ -13,7 +13,7 @@ requires-python = ">=3.11"
 dependencies = ["typing-extensions"]
 
 [project.urls]
-repository = "https://github.com/NabuCasa/aiospinel"
+repository = "https://github.com/home-assistant-libs/aiospinel"
 
 [project.optional-dependencies]
 dev = [
