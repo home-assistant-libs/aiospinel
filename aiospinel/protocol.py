@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 import dataclasses
 import logging
-import typing
+from typing import Any, Literal, Union, cast, overload
 
 from aiospinel.types import (
     CommandID,
@@ -18,7 +18,7 @@ from aiospinel.types import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PropertyKey = typing.Union[PropertyID, int]
+PropertyKey = Union[PropertyID, int]
 
 COMMAND_TIMEOUT = 2
 RESET_TIMEOUT = 2
@@ -58,7 +58,7 @@ class SerialProtocol(asyncio.Protocol):
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         _LOGGER.debug("Connection made: %s", transport)
 
-        self._transport = typing.cast("asyncio.Transport", transport)
+        self._transport = cast("asyncio.Transport", transport)
         self._disconnected_event.clear()
         self._connected_event.set()
 
@@ -277,24 +277,24 @@ class SpinelProtocol(SerialProtocol):
                         exc_info=True,
                     )
 
-    @typing.overload
+    @overload
     async def send_frame(
         self,
         frame: SpinelFrame,
         *,
-        wait_response: typing.Literal[False],
+        wait_response: Literal[False],
         retries: int = ...,
         timeout: float = ...,
         retry_delay: float = ...,
         tid: int | None = ...,
     ) -> None: ...
 
-    @typing.overload
+    @overload
     async def send_frame(
         self,
         frame: SpinelFrame,
         *,
-        wait_response: typing.Literal[True],
+        wait_response: Literal[True],
         retries: int = ...,
         timeout: float = ...,
         retry_delay: float = ...,
@@ -358,7 +358,7 @@ class SpinelProtocol(SerialProtocol):
         raise AssertionError("Unreachable")
 
     async def send_command(
-        self, command_id: CommandID, data: bytes, **kwargs: typing.Any
+        self, command_id: CommandID, data: bytes, **kwargs: Any
     ) -> SpinelFrame:
         frame = SpinelFrame(
             header=SpinelHeader(
@@ -384,7 +384,7 @@ class SpinelProtocol(SerialProtocol):
 
     async def iter_property_changes(
         self, property_id: PropertyKey
-    ) -> typing.AsyncIterator[bytes]:
+    ) -> AsyncIterator[bytes]:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
 
         try:

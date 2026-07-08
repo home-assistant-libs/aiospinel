@@ -32,6 +32,9 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["aiospinel", "aiospinel.*"]
 
+[tool.setuptools.package-data]
+aiospinel = ["py.typed"]
+
 [tool.setuptools_scm]
 
 [tool.pytest.ini_options]
