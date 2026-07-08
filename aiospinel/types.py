@@ -222,6 +222,8 @@ class PropertyID(PackedUInt21, enum.Enum):
     TRNG_128 = 4102
     TRNG_RAW_32 = 4103
 
+    # Vendor properties (0x3C00 - 0x3FFF)
+
 
 class ResetReason(enum8):
     PLATFORM = 1

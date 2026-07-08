@@ -18,6 +18,8 @@ from aiospinel.types import (
 
 _LOGGER = logging.getLogger(__name__)
 
+PropertyKey = typing.Union[PropertyID, int]
+
 COMMAND_TIMEOUT = 2
 RESET_TIMEOUT = 2
 
@@ -198,7 +200,7 @@ class SpinelProtocol(SerialProtocol):
         self._transaction_id: int = 1
         self._pending_frames: dict[int, asyncio.Future[SpinelFrame]] = {}
         self._property_listeners: defaultdict[
-            PropertyID, list[Callable[[bytes], None]]
+            PropertyKey, list[Callable[[bytes], None]]
         ] = defaultdict(list)
 
     def send_data(self, data: bytes) -> None:
@@ -257,7 +259,12 @@ class SpinelProtocol(SerialProtocol):
 
         if frame.command_id == CommandID.PROP_VALUE_IS:
             raw_prop_id, data = PackedUInt21.deserialize(frame.data)
-            prop_id = PropertyID(raw_prop_id)
+            # A known core property resolves to its enum member; an unknown (e.g.
+            # vendor) id is dispatched by its raw integer value.
+            try:
+                prop_id: PropertyKey = PropertyID(raw_prop_id)
+            except ValueError:
+                prop_id = raw_prop_id
 
             for listener in self._property_listeners[prop_id]:
                 try:
@@ -366,17 +373,17 @@ class SpinelProtocol(SerialProtocol):
         return await self.send_frame(frame, **kwargs)  # type: ignore[no-any-return]
 
     def add_property_listener(
-        self, property_id: PropertyID, callback: Callable[[bytes], None]
+        self, property_id: PropertyKey, callback: Callable[[bytes], None]
     ) -> None:
         self._property_listeners[property_id].append(callback)
 
     def remove_property_listener(
-        self, property_id: PropertyID, callback: Callable[[bytes], None]
+        self, property_id: PropertyKey, callback: Callable[[bytes], None]
     ) -> None:
         self._property_listeners[property_id].remove(callback)
 
     async def iter_property_changes(
-        self, property_id: PropertyID
+        self, property_id: PropertyKey
     ) -> typing.AsyncIterator[bytes]:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
 
@@ -389,7 +396,7 @@ class SpinelProtocol(SerialProtocol):
         finally:
             self.remove_property_listener(property_id, queue.put_nowait)
 
-    async def wait_for_property(self, property_id: PropertyID, value: bytes) -> None:
+    async def wait_for_property(self, property_id: PropertyKey, value: bytes) -> None:
         async for changed_value in self.iter_property_changes(property_id):
             if changed_value == value:
                 return

@@ -181,17 +181,23 @@ async def test_ignore_tid_zero_response(caplog: pytest.LogCaptureFixture) -> Non
         assert record.levelno < logging.WARNING
 
 
-async def test_property_listener() -> None:
+@pytest.mark.parametrize(
+    "prop_id",
+    [
+        PropertyID.STREAM_DEBUG,
+        0x3D5A,  # VENDOR_ZIGGURAT
+    ],
+)
+async def test_property_listener(prop_id: PropertyID | int) -> None:
     """Test the property listener mechanism."""
     client, conversation = await create_spinel_test_pair()
     listener = MagicMock()
-    prop_id = PropertyID.STREAM_DEBUG
     prop_data = b"hello world"
 
     client.add_property_listener(prop_id, listener)
 
     # Send a PROP_VALUE_IS frame
-    frame_data = PackedUInt21.serialize(prop_id) + prop_data
+    frame_data = PackedUInt21(prop_id).serialize() + prop_data
     response = SpinelFrame(
         header=SpinelHeader(transaction_id=0, network_link_id=0, flag=0b10),
         command_id=CommandID.PROP_VALUE_IS,
@@ -228,7 +234,7 @@ async def test_iter_property_changes() -> None:
         response = SpinelFrame(
             header=SpinelHeader(transaction_id=0, network_link_id=0, flag=0b10),
             command_id=CommandID.PROP_VALUE_IS,
-            data=PackedUInt21.serialize(prop_id) + f"test {i}".encode("ascii"),
+            data=PackedUInt21(prop_id).serialize() + f"test {i}".encode("ascii"),
         )
         await conversation.send(HDLCLiteFrame(data=response.serialize()).serialize())
 
