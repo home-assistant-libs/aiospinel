@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 import dataclasses
 import logging
-import typing
+from typing import Any, Literal, Union, cast, overload
 
 from aiospinel.types import (
     CommandID,
@@ -17,6 +17,8 @@ from aiospinel.types import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+PropertyKey = Union[PropertyID, int]
 
 COMMAND_TIMEOUT = 2
 RESET_TIMEOUT = 2
@@ -56,7 +58,7 @@ class SerialProtocol(asyncio.Protocol):
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         _LOGGER.debug("Connection made: %s", transport)
 
-        self._transport = typing.cast("asyncio.Transport", transport)
+        self._transport = cast("asyncio.Transport", transport)
         self._disconnected_event.clear()
         self._connected_event.set()
 
@@ -198,7 +200,7 @@ class SpinelProtocol(SerialProtocol):
         self._transaction_id: int = 1
         self._pending_frames: dict[int, asyncio.Future[SpinelFrame]] = {}
         self._property_listeners: defaultdict[
-            PropertyID, list[Callable[[bytes], None]]
+            PropertyKey, list[Callable[[bytes], None]]
         ] = defaultdict(list)
 
     def send_data(self, data: bytes) -> None:
@@ -257,7 +259,12 @@ class SpinelProtocol(SerialProtocol):
 
         if frame.command_id == CommandID.PROP_VALUE_IS:
             raw_prop_id, data = PackedUInt21.deserialize(frame.data)
-            prop_id = PropertyID(raw_prop_id)
+            # A known core property resolves to its enum member; an unknown (e.g.
+            # vendor) id is dispatched by its raw integer value.
+            try:
+                prop_id: PropertyKey = PropertyID(raw_prop_id)
+            except ValueError:
+                prop_id = raw_prop_id
 
             for listener in self._property_listeners[prop_id]:
                 try:
@@ -270,24 +277,24 @@ class SpinelProtocol(SerialProtocol):
                         exc_info=True,
                     )
 
-    @typing.overload
+    @overload
     async def send_frame(
         self,
         frame: SpinelFrame,
         *,
-        wait_response: typing.Literal[False],
+        wait_response: Literal[False],
         retries: int = ...,
         timeout: float = ...,
         retry_delay: float = ...,
         tid: int | None = ...,
     ) -> None: ...
 
-    @typing.overload
+    @overload
     async def send_frame(
         self,
         frame: SpinelFrame,
         *,
-        wait_response: typing.Literal[True],
+        wait_response: Literal[True],
         retries: int = ...,
         timeout: float = ...,
         retry_delay: float = ...,
@@ -351,7 +358,7 @@ class SpinelProtocol(SerialProtocol):
         raise AssertionError("Unreachable")
 
     async def send_command(
-        self, command_id: CommandID, data: bytes, **kwargs: typing.Any
+        self, command_id: CommandID, data: bytes, **kwargs: Any
     ) -> SpinelFrame:
         frame = SpinelFrame(
             header=SpinelHeader(
@@ -366,18 +373,18 @@ class SpinelProtocol(SerialProtocol):
         return await self.send_frame(frame, **kwargs)  # type: ignore[no-any-return]
 
     def add_property_listener(
-        self, property_id: PropertyID, callback: Callable[[bytes], None]
+        self, property_id: PropertyKey, callback: Callable[[bytes], None]
     ) -> None:
         self._property_listeners[property_id].append(callback)
 
     def remove_property_listener(
-        self, property_id: PropertyID, callback: Callable[[bytes], None]
+        self, property_id: PropertyKey, callback: Callable[[bytes], None]
     ) -> None:
         self._property_listeners[property_id].remove(callback)
 
     async def iter_property_changes(
-        self, property_id: PropertyID
-    ) -> typing.AsyncIterator[bytes]:
+        self, property_id: PropertyKey
+    ) -> AsyncIterator[bytes]:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
 
         try:
@@ -389,7 +396,7 @@ class SpinelProtocol(SerialProtocol):
         finally:
             self.remove_property_listener(property_id, queue.put_nowait)
 
-    async def wait_for_property(self, property_id: PropertyID, value: bytes) -> None:
+    async def wait_for_property(self, property_id: PropertyKey, value: bytes) -> None:
         async for changed_value in self.iter_property_changes(property_id):
             if changed_value == value:
                 return
