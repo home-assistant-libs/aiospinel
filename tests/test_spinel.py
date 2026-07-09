@@ -13,7 +13,7 @@ from aiospinel.protocol import (
     SpinelProtocol,
     crc16_kermit,
 )
-from aiospinel.types import CommandID, PackedUInt21, PropertyID
+from aiospinel.types import CommandID, HDLCSpecial, PackedUInt21, PropertyID
 from tests.common import PairedTransport
 
 _LOGGER = logging.getLogger(__name__)
@@ -101,6 +101,16 @@ class Conversation(asyncio.Protocol):
     async def send(self, data: bytes) -> None:
         assert self.transport is not None
         self.transport.write(data)
+
+    async def send_frame(self, frame: SpinelFrame) -> None:
+        await self.send(HDLCLiteFrame(data=frame.serialize()).serialize())
+
+    async def receive(self) -> SpinelFrame:
+        """Read the next Spinel frame the client sent, skipping HDLC flag delimiters."""
+        while True:
+            chunk = (await self._reader.readuntil(bytes([HDLCSpecial.FLAG])))[:-1]
+            if chunk:
+                return SpinelFrame.from_bytes(HDLCLiteFrame.from_bytes(chunk).data)
 
 
 async def create_spinel_test_pair() -> tuple[SpinelProtocol, Conversation]:
@@ -260,6 +270,45 @@ async def test_send_frame_tid_zero_raises() -> None:
 
     # Should not raise when wait_response is False
     await client.send_frame(frame, tid=0, wait_response=False)
+
+
+async def test_tid_concurrency() -> None:
+    """Test TID concurrency."""
+    client, conversation = await create_spinel_test_pair()
+
+    async def echo_requests() -> None:
+        while True:
+            request = await conversation.receive()
+            await conversation.send_frame(
+                SpinelFrame(
+                    header=request.header,
+                    command_id=CommandID.PROP_VALUE_IS,
+                    data=request.data,
+                )
+            )
+
+    payloads = [f"req-{i}".encode() for i in range(25)]
+    tasks = [
+        asyncio.create_task(client.send_command(CommandID.PROP_VALUE_GET, payload))
+        for payload in payloads
+    ]
+    await asyncio.sleep(0.01)
+
+    # Only 15 can be in flight, the remaining 10 block waiting for a free TID
+    assert sorted(client._pending_frames) == list(range(1, 16))
+    assert client._free_tids.empty()
+    assert not any(task.done() for task in tasks)
+
+    echo = asyncio.create_task(echo_requests())
+    try:
+        async with asyncio.timeout(1):
+            results = await asyncio.gather(*tasks)
+    finally:
+        echo.cancel()
+
+    assert [result.data for result in results] == payloads
+    assert not client._pending_frames
+    assert client._free_tids.qsize() == 15
 
 
 @pytest.mark.parametrize(
