@@ -197,7 +197,12 @@ class SpinelProtocol(SerialProtocol):
 
     def __init__(self) -> None:
         super().__init__()
-        self._transaction_id: int = 1
+
+        # TID 0 is reserved for no-response frames, leaving 1-15 for requests
+        self._free_tids: asyncio.Queue[int] = asyncio.Queue()
+        for tid in range(1, 16):
+            self._free_tids.put_nowait(tid)
+
         self._pending_frames: dict[int, asyncio.Future[SpinelFrame]] = {}
         self._property_listeners: defaultdict[
             PropertyKey, list[Callable[[bytes], None]]
@@ -311,10 +316,12 @@ class SpinelProtocol(SerialProtocol):
         retry_delay: float = 0.1,
         tid: int | None = None,
     ) -> SpinelFrame | None:
-        # A transaction ID of `0` is special: we only use 1-15
-        if tid is None:
-            self._transaction_id = (self._transaction_id + 1) % (0b1111 - 1)
-            tid = 1 + self._transaction_id
+        needs_tid = tid is None and wait_response
+
+        if needs_tid:
+            tid = await self._free_tids.get()
+        elif tid is None:
+            tid = 0
 
         # Replace the transaction ID
         new_header = dataclasses.replace(frame.header, transaction_id=tid)
@@ -353,7 +360,9 @@ class SpinelProtocol(SerialProtocol):
 
                     await asyncio.sleep(retry_delay)
         finally:
-            del self._pending_frames[tid]
+            self._pending_frames.pop(tid, None)
+            if needs_tid:
+                self._free_tids.put_nowait(tid)
 
         raise AssertionError("Unreachable")
 
