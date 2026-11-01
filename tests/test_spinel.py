@@ -8,12 +8,13 @@ import pytest
 
 from aiospinel.protocol import (
     HDLCLiteFrame,
+    PropertyStatusError,
     SpinelFrame,
     SpinelHeader,
     SpinelProtocol,
     crc16_kermit,
 )
-from aiospinel.types import CommandID, HDLCSpecial, PackedUInt21, PropertyID
+from aiospinel.types import CommandID, HDLCSpecial, PackedUInt21, PropertyID, Status
 from tests.common import PairedTransport
 
 _LOGGER = logging.getLogger(__name__)
@@ -309,6 +310,88 @@ async def test_tid_concurrency() -> None:
     assert [result.data for result in results] == payloads
     assert not client._pending_frames
     assert client._free_tids.qsize() == 15
+
+
+async def reply_to_next_request(conversation: Conversation, data: bytes) -> SpinelFrame:
+    request = await conversation.receive()
+    await conversation.send_frame(
+        SpinelFrame(
+            header=request.header,
+            command_id=CommandID.PROP_VALUE_IS,
+            data=data,
+        )
+    )
+
+    return request
+
+
+@pytest.mark.parametrize(
+    "prop_id",
+    [
+        PropertyID.NCP_VERSION,
+        0x3D5A,  # VENDOR_ZIGGURAT
+    ],
+)
+async def test_get_property(prop_id: PropertyID | int) -> None:
+    client, conversation = await create_spinel_test_pair()
+    prop_bytes = PackedUInt21(prop_id).serialize()
+
+    async with asyncio.timeout(1):
+        value, request = await asyncio.gather(
+            client.get_property(prop_id),
+            reply_to_next_request(conversation, prop_bytes + b"value"),
+        )
+
+    assert request.command_id == CommandID.PROP_VALUE_GET
+    assert request.data == prop_bytes
+    assert value == b"value"
+
+
+async def test_set_property() -> None:
+    client, conversation = await create_spinel_test_pair()
+    prop_bytes = PackedUInt21(PropertyID.PHY_CHAN).serialize()
+
+    async with asyncio.timeout(1):
+        value, request = await asyncio.gather(
+            client.set_property(PropertyID.PHY_CHAN, b"\x0f"),
+            reply_to_next_request(conversation, prop_bytes + b"\x0f"),
+        )
+
+    assert request.command_id == CommandID.PROP_VALUE_SET
+    assert request.data == prop_bytes + b"\x0f"
+    assert value == b"\x0f"
+
+
+async def test_get_property_status_error() -> None:
+    client, conversation = await create_spinel_test_pair()
+    reply = asyncio.create_task(
+        reply_to_next_request(
+            conversation,
+            PropertyID.LAST_STATUS.serialize() + Status.PROP_NOT_FOUND.serialize(),
+        )
+    )
+
+    async with asyncio.timeout(1):
+        with pytest.raises(PropertyStatusError) as exc_info:
+            await client.get_property(0x3D5A)
+
+        await reply
+
+    assert exc_info.value.property_id == 0x3D5A
+    assert exc_info.value.status == Status.PROP_NOT_FOUND
+
+
+async def test_get_property_unexpected_property() -> None:
+    client, conversation = await create_spinel_test_pair()
+    reply = asyncio.create_task(
+        reply_to_next_request(conversation, PropertyID.HWADDR.serialize() + b"value")
+    )
+
+    async with asyncio.timeout(1):
+        with pytest.raises(ValueError, match="Unexpected response for property"):
+            await client.get_property(PropertyID.NCP_VERSION)
+
+        await reply
 
 
 @pytest.mark.parametrize(

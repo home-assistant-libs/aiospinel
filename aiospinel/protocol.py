@@ -5,7 +5,9 @@ from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
 import dataclasses
 import logging
-from typing import Any, Literal, Union, cast, overload
+from typing import Literal, TypedDict, Union, cast, overload
+
+from typing_extensions import Unpack
 
 from aiospinel.types import (
     CommandID,
@@ -22,6 +24,22 @@ PropertyKey = Union[PropertyID, int]
 
 COMMAND_TIMEOUT = 2
 RESET_TIMEOUT = 2
+
+
+class SendOptions(TypedDict, total=False):
+    retries: int
+    timeout: float
+    retry_delay: float
+    tid: int | None
+
+
+class PropertyStatusError(Exception):
+    """The device replied to a property request with a status instead of a value."""
+
+    def __init__(self, property_id: PropertyKey, status: Status) -> None:
+        super().__init__(f"Property {property_id!r} request failed: {status!r}")
+        self.property_id = property_id
+        self.status = status
 
 
 def crc16_kermit(data: bytes | bytearray) -> int:
@@ -366,9 +384,34 @@ class SpinelProtocol(SerialProtocol):
 
         raise AssertionError("Unreachable")
 
+    @overload
     async def send_command(
-        self, command_id: CommandID, data: bytes, **kwargs: Any
-    ) -> SpinelFrame:
+        self,
+        command_id: CommandID,
+        data: bytes,
+        *,
+        wait_response: Literal[False],
+        **kwargs: Unpack[SendOptions],
+    ) -> None: ...
+
+    @overload
+    async def send_command(
+        self,
+        command_id: CommandID,
+        data: bytes,
+        *,
+        wait_response: Literal[True] = ...,
+        **kwargs: Unpack[SendOptions],
+    ) -> SpinelFrame: ...
+
+    async def send_command(
+        self,
+        command_id: CommandID,
+        data: bytes,
+        *,
+        wait_response: bool = True,
+        **kwargs: Unpack[SendOptions],
+    ) -> SpinelFrame | None:
         frame = SpinelFrame(
             header=SpinelHeader(
                 flag=0b10,
@@ -379,7 +422,48 @@ class SpinelProtocol(SerialProtocol):
             data=data,
         )
 
-        return await self.send_frame(frame, **kwargs)  # type: ignore[no-any-return]
+        if not wait_response:
+            await self.send_frame(frame, wait_response=False, **kwargs)
+            return None
+
+        return await self.send_frame(frame, wait_response=True, **kwargs)
+
+    async def get_property(
+        self, property_id: PropertyKey, **kwargs: Unpack[SendOptions]
+    ) -> bytes:
+        return await self._property_command(
+            CommandID.PROP_VALUE_GET, property_id, b"", **kwargs
+        )
+
+    async def set_property(
+        self, property_id: PropertyKey, value: bytes, **kwargs: Unpack[SendOptions]
+    ) -> bytes:
+        return await self._property_command(
+            CommandID.PROP_VALUE_SET, property_id, value, **kwargs
+        )
+
+    async def _property_command(
+        self,
+        command_id: CommandID,
+        property_id: PropertyKey,
+        data: bytes,
+        **kwargs: Unpack[SendOptions],
+    ) -> bytes:
+        rsp = await self.send_command(
+            command_id,
+            PackedUInt21(property_id).serialize() + data,
+            **kwargs,
+        )
+        rsp_prop_id, value = PackedUInt21.deserialize(rsp.data)
+
+        if rsp_prop_id == property_id:
+            return value
+
+        # Unknown properties are answered with `LAST_STATUS` (e.g. `PROP_NOT_FOUND`)
+        if rsp_prop_id == PropertyID.LAST_STATUS:
+            raise PropertyStatusError(property_id, Status(value[0]))
+
+        raise ValueError(f"Unexpected response for property {property_id!r}: {rsp!r}")
 
     def add_property_listener(
         self, property_id: PropertyKey, callback: Callable[[bytes], None]
