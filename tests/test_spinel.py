@@ -8,12 +8,13 @@ import pytest
 
 from aiospinel.protocol import (
     HDLCLiteFrame,
+    PropertyStatusError,
     SpinelFrame,
     SpinelHeader,
     SpinelProtocol,
     crc16_kermit,
 )
-from aiospinel.types import CommandID, HDLCSpecial, PackedUInt21, PropertyID
+from aiospinel.types import CommandID, HDLCSpecial, PackedUInt21, PropertyID, Status
 from tests.common import PairedTransport
 
 _LOGGER = logging.getLogger(__name__)
@@ -227,6 +228,34 @@ async def test_property_listener(prop_id: PropertyID | int) -> None:
     assert listener.mock_calls == []
 
 
+@pytest.mark.parametrize("bad_data", [b"", b"\x80"])
+async def test_malformed_property_id(bad_data: bytes) -> None:
+    """Test that a malformed property ID does not stop parsing of later frames."""
+    client, conversation = await create_spinel_test_pair()
+    listener = MagicMock()
+    client.add_property_listener(PropertyID.STREAM_DEBUG, listener)
+
+    bad = SpinelFrame(
+        header=SpinelHeader(transaction_id=0, network_link_id=0, flag=0b10),
+        command_id=CommandID.PROP_VALUE_IS,
+        data=bad_data,
+    )
+    good = SpinelFrame(
+        header=SpinelHeader(transaction_id=0, network_link_id=0, flag=0b10),
+        command_id=CommandID.PROP_VALUE_IS,
+        data=PropertyID.STREAM_DEBUG.serialize() + b"hello",
+    )
+
+    # Both frames arrive in one chunk
+    await conversation.send(
+        HDLCLiteFrame(data=bad.serialize()).serialize()
+        + HDLCLiteFrame(data=good.serialize()).serialize()
+    )
+    await asyncio.sleep(0.01)
+
+    assert listener.mock_calls == [call(b"hello")]
+
+
 async def test_iter_property_changes() -> None:
     """Test the async iterator for property changes."""
     client, conversation = await create_spinel_test_pair()
@@ -311,6 +340,122 @@ async def test_tid_concurrency() -> None:
     assert client._free_tids.qsize() == 15
 
 
+async def reply_to_next_request(conversation: Conversation, data: bytes) -> SpinelFrame:
+    request = await conversation.receive()
+    await conversation.send_frame(
+        SpinelFrame(
+            header=request.header,
+            command_id=CommandID.PROP_VALUE_IS,
+            data=data,
+        )
+    )
+
+    return request
+
+
+@pytest.mark.parametrize(
+    "prop_id",
+    [
+        PropertyID.NCP_VERSION,
+        0x3D5A,  # VENDOR_ZIGGURAT
+    ],
+)
+async def test_get_property(prop_id: PropertyID | int) -> None:
+    client, conversation = await create_spinel_test_pair()
+    prop_bytes = PackedUInt21(prop_id).serialize()
+
+    async with asyncio.timeout(1):
+        value, request = await asyncio.gather(
+            client.get_property(prop_id),
+            reply_to_next_request(conversation, prop_bytes + b"value"),
+        )
+
+    assert request.command_id == CommandID.PROP_VALUE_GET
+    assert request.data == prop_bytes
+    assert value == b"value"
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        (PackedUInt21(PropertyID.PHY_CHAN).serialize() + b"\x0f", b"\x0f"),
+        (PropertyID.LAST_STATUS.serialize() + Status.OK.serialize(), None),
+    ],
+)
+async def test_set_property(reply: bytes, expected: bytes | None) -> None:
+    client, conversation = await create_spinel_test_pair()
+    prop_bytes = PackedUInt21(PropertyID.PHY_CHAN).serialize()
+
+    async with asyncio.timeout(1):
+        value, request = await asyncio.gather(
+            client.set_property(PropertyID.PHY_CHAN, b"\x0f"),
+            reply_to_next_request(conversation, reply),
+        )
+
+    assert request.command_id == CommandID.PROP_VALUE_SET
+    assert request.data == prop_bytes + b"\x0f"
+    assert value == expected
+
+
+async def test_set_property_status_error() -> None:
+    client, conversation = await create_spinel_test_pair()
+    reply = asyncio.create_task(
+        reply_to_next_request(
+            conversation,
+            PropertyID.LAST_STATUS.serialize() + Status.INVALID_ARGUMENT.serialize(),
+        )
+    )
+
+    async with asyncio.timeout(1):
+        with pytest.raises(PropertyStatusError) as exc_info:
+            await client.set_property(PropertyID.PHY_CHAN, b"\x0f")
+
+        await reply
+
+    assert exc_info.value.status == Status.INVALID_ARGUMENT
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        Status.PROP_NOT_FOUND,
+        0x3C01,  # Vendor
+        0x4000 + 1,  # Stack native
+    ],
+)
+async def test_get_property_status_error(status: Status | int) -> None:
+    client, conversation = await create_spinel_test_pair()
+    reply = asyncio.create_task(
+        reply_to_next_request(
+            conversation,
+            PropertyID.LAST_STATUS.serialize() + PackedUInt21(status).serialize(),
+        )
+    )
+
+    async with asyncio.timeout(1):
+        with pytest.raises(PropertyStatusError) as exc_info:
+            await client.get_property(0x3D5A)
+
+        await reply
+
+    assert exc_info.value.property_id == 0x3D5A
+    assert exc_info.value.status == status
+    assert isinstance(exc_info.value.status, Status) == isinstance(status, Status)
+
+
+async def test_get_property_unexpected_property() -> None:
+    client, conversation = await create_spinel_test_pair()
+    reply = asyncio.create_task(
+        reply_to_next_request(conversation, PropertyID.HWADDR.serialize() + b"value")
+    )
+
+    async with asyncio.timeout(1):
+        with pytest.raises(ValueError, match="Unexpected response for property"):
+            await client.get_property(PropertyID.NCP_VERSION)
+
+        await reply
+
+
 @pytest.mark.parametrize(
     ("value", "serialized"),
     [
@@ -332,8 +477,37 @@ def test_packed_uint21_serialization(value, serialized):
     assert remainder == b"remainder"
 
 
-def test_packed_uint21_deserialization_failure():
-    """Test PackedUInt21 deserialization failure on oversized input."""
+@pytest.mark.parametrize("value", [-1, PackedUInt21.max_value + 1])
+def test_packed_uint21_serialization_failure(value):
+    """Test PackedUInt21 serialization failure on out-of-range values."""
 
     with pytest.raises(ValueError):
-        PackedUInt21.deserialize(b"\x80\x80\x80\x80\x00")
+        PackedUInt21(value).serialize()
+
+
+@pytest.mark.parametrize(
+    ("status", "serialized"),
+    [
+        (Status.OK, b"\x00"),
+        (Status.RESET_POWER_ON, b"\x70"),
+    ],
+)
+def test_status_serialization(status, serialized):
+    assert status.serialize() == serialized
+    assert Status.deserialize(serialized + b"remainder") == (status, b"remainder")
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"\x80\x80\x80\x80\x00",  # Oversized
+        b"",  # Empty
+        b"\x80",  # Truncated
+        b"\xff\xff",  # Truncated
+    ],
+)
+def test_packed_uint21_deserialization_failure(data):
+    """Test PackedUInt21 deserialization failure on oversized or truncated input."""
+
+    with pytest.raises(ValueError):
+        PackedUInt21.deserialize(data)

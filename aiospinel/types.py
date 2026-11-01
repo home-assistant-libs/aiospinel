@@ -12,6 +12,10 @@ class PackedUInt21(int):
 
     def serialize(self) -> bytes:
         n = int(self)
+
+        if not 0 <= n <= self.max_value:
+            raise ValueError(f"Packed integer must be between 0 and {self.max_value}")
+
         chunks = []
 
         while True:
@@ -41,6 +45,8 @@ class PackedUInt21(int):
 
             if byte & 0b10000000 == 0:
                 break
+        else:
+            raise ValueError(f"Packed integer is truncated: {data!r}")
 
         n = 0
 
@@ -239,7 +245,7 @@ class HDLCSpecial(enum.IntEnum):
     VENDOR = 0xF8
 
 
-class Status(enum8):
+class Status(PackedUInt21, enum.Enum):
     OK = 0  # Operation has completed successfully.
     FAILURE = 1  # Operation has failed for some undefined reason.
     UNIMPLEMENTED = 2  # Given operation has not been implemented.
