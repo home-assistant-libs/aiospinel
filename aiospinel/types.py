@@ -12,6 +12,10 @@ class PackedUInt21(int):
 
     def serialize(self) -> bytes:
         n = int(self)
+
+        if not 0 <= n <= self.max_value:
+            raise ValueError(f"Packed integer must be between 0 and {self.max_value}")
+
         chunks = []
 
         while True:

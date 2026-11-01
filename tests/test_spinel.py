@@ -415,6 +415,14 @@ def test_packed_uint21_serialization(value, serialized):
     assert remainder == b"remainder"
 
 
+@pytest.mark.parametrize("value", [-1, PackedUInt21.max_value + 1])
+def test_packed_uint21_serialization_failure(value):
+    """Test PackedUInt21 serialization failure on out-of-range values."""
+
+    with pytest.raises(ValueError):
+        PackedUInt21(value).serialize()
+
+
 def test_packed_uint21_deserialization_failure():
     """Test PackedUInt21 deserialization failure on oversized input."""
 
