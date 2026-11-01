@@ -228,6 +228,34 @@ async def test_property_listener(prop_id: PropertyID | int) -> None:
     assert listener.mock_calls == []
 
 
+@pytest.mark.parametrize("bad_data", [b"", b"\x80"])
+async def test_malformed_property_id(bad_data: bytes) -> None:
+    """Test that a malformed property ID does not stop parsing of later frames."""
+    client, conversation = await create_spinel_test_pair()
+    listener = MagicMock()
+    client.add_property_listener(PropertyID.STREAM_DEBUG, listener)
+
+    bad = SpinelFrame(
+        header=SpinelHeader(transaction_id=0, network_link_id=0, flag=0b10),
+        command_id=CommandID.PROP_VALUE_IS,
+        data=bad_data,
+    )
+    good = SpinelFrame(
+        header=SpinelHeader(transaction_id=0, network_link_id=0, flag=0b10),
+        command_id=CommandID.PROP_VALUE_IS,
+        data=PropertyID.STREAM_DEBUG.serialize() + b"hello",
+    )
+
+    # Both frames arrive in one chunk
+    await conversation.send(
+        HDLCLiteFrame(data=bad.serialize()).serialize()
+        + HDLCLiteFrame(data=good.serialize()).serialize()
+    )
+    await asyncio.sleep(0.01)
+
+    assert listener.mock_calls == [call(b"hello")]
+
+
 async def test_iter_property_changes() -> None:
     """Test the async iterator for property changes."""
     client, conversation = await create_spinel_test_pair()

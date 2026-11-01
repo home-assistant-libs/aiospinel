@@ -281,7 +281,12 @@ class SpinelProtocol(SerialProtocol):
                 fut.set_result(frame)
 
         if frame.command_id == CommandID.PROP_VALUE_IS:
-            raw_prop_id, data = PackedUInt21.deserialize(frame.data)
+            try:
+                raw_prop_id, data = PackedUInt21.deserialize(frame.data)
+            except ValueError as e:
+                _LOGGER.debug("Failed to decode property ID: %r", e)
+                return
+
             # A known core property resolves to its enum member; an unknown (e.g.
             # vendor) id is dispatched by its raw integer value.
             try:
