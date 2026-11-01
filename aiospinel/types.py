@@ -243,7 +243,7 @@ class HDLCSpecial(enum.IntEnum):
     VENDOR = 0xF8
 
 
-class Status(enum8):
+class Status(PackedUInt21, enum.Enum):
     OK = 0  # Operation has completed successfully.
     FAILURE = 1  # Operation has failed for some undefined reason.
     UNIMPLEMENTED = 2  # Given operation has not been implemented.

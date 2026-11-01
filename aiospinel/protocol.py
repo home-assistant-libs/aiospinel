@@ -36,7 +36,7 @@ class SendOptions(TypedDict, total=False):
 class PropertyStatusError(Exception):
     """The device replied to a property request with a status instead of a value."""
 
-    def __init__(self, property_id: PropertyKey, status: Status) -> None:
+    def __init__(self, property_id: PropertyKey, status: Status | int) -> None:
         super().__init__(f"Property {property_id!r} request failed: {status!r}")
         self.property_id = property_id
         self.status = status
@@ -468,7 +468,15 @@ class SpinelProtocol(SerialProtocol):
 
         # Unknown properties are answered with `LAST_STATUS` (e.g. `PROP_NOT_FOUND`)
         if rsp_prop_id == PropertyID.LAST_STATUS:
-            raise PropertyStatusError(property_id, Status(value[0]))
+            raw_status, _ = PackedUInt21.deserialize(value)
+
+            # Vendor and stack-native statuses have no `Status` member
+            try:
+                status: Status | int = Status(raw_status)
+            except ValueError:
+                status = raw_status
+
+            raise PropertyStatusError(property_id, status)
 
         raise ValueError(f"Unexpected response for property {property_id!r}: {rsp!r}")
 

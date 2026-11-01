@@ -387,12 +387,20 @@ async def test_set_property_status_error() -> None:
     assert exc_info.value.status == Status.INVALID_ARGUMENT
 
 
-async def test_get_property_status_error() -> None:
+@pytest.mark.parametrize(
+    "status",
+    [
+        Status.PROP_NOT_FOUND,
+        0x3C01,  # Vendor
+        0x4000 + 1,  # Stack native
+    ],
+)
+async def test_get_property_status_error(status: Status | int) -> None:
     client, conversation = await create_spinel_test_pair()
     reply = asyncio.create_task(
         reply_to_next_request(
             conversation,
-            PropertyID.LAST_STATUS.serialize() + Status.PROP_NOT_FOUND.serialize(),
+            PropertyID.LAST_STATUS.serialize() + PackedUInt21(status).serialize(),
         )
     )
 
@@ -403,7 +411,8 @@ async def test_get_property_status_error() -> None:
         await reply
 
     assert exc_info.value.property_id == 0x3D5A
-    assert exc_info.value.status == Status.PROP_NOT_FOUND
+    assert exc_info.value.status == status
+    assert isinstance(exc_info.value.status, Status) == isinstance(status, Status)
 
 
 async def test_get_property_unexpected_property() -> None:
@@ -446,6 +455,18 @@ def test_packed_uint21_serialization_failure(value):
 
     with pytest.raises(ValueError):
         PackedUInt21(value).serialize()
+
+
+@pytest.mark.parametrize(
+    ("status", "serialized"),
+    [
+        (Status.OK, b"\x00"),
+        (Status.RESET_POWER_ON, b"\x70"),
+    ],
+)
+def test_status_serialization(status, serialized):
+    assert status.serialize() == serialized
+    assert Status.deserialize(serialized + b"remainder") == (status, b"remainder")
 
 
 def test_packed_uint21_deserialization_failure():
