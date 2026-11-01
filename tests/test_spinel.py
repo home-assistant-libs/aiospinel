@@ -347,19 +347,44 @@ async def test_get_property(prop_id: PropertyID | int) -> None:
     assert value == b"value"
 
 
-async def test_set_property() -> None:
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        (PackedUInt21(PropertyID.PHY_CHAN).serialize() + b"\x0f", b"\x0f"),
+        (PropertyID.LAST_STATUS.serialize() + Status.OK.serialize(), None),
+    ],
+)
+async def test_set_property(reply: bytes, expected: bytes | None) -> None:
     client, conversation = await create_spinel_test_pair()
     prop_bytes = PackedUInt21(PropertyID.PHY_CHAN).serialize()
 
     async with asyncio.timeout(1):
         value, request = await asyncio.gather(
             client.set_property(PropertyID.PHY_CHAN, b"\x0f"),
-            reply_to_next_request(conversation, prop_bytes + b"\x0f"),
+            reply_to_next_request(conversation, reply),
         )
 
     assert request.command_id == CommandID.PROP_VALUE_SET
     assert request.data == prop_bytes + b"\x0f"
-    assert value == b"\x0f"
+    assert value == expected
+
+
+async def test_set_property_status_error() -> None:
+    client, conversation = await create_spinel_test_pair()
+    reply = asyncio.create_task(
+        reply_to_next_request(
+            conversation,
+            PropertyID.LAST_STATUS.serialize() + Status.INVALID_ARGUMENT.serialize(),
+        )
+    )
+
+    async with asyncio.timeout(1):
+        with pytest.raises(PropertyStatusError) as exc_info:
+            await client.set_property(PropertyID.PHY_CHAN, b"\x0f")
+
+        await reply
+
+    assert exc_info.value.status == Status.INVALID_ARGUMENT
 
 
 async def test_get_property_status_error() -> None:

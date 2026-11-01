@@ -437,10 +437,17 @@ class SpinelProtocol(SerialProtocol):
 
     async def set_property(
         self, property_id: PropertyKey, value: bytes, **kwargs: Unpack[SendOptions]
-    ) -> bytes:
-        return await self._property_command(
-            CommandID.PROP_VALUE_SET, property_id, value, **kwargs
-        )
+    ) -> bytes | None:
+        try:
+            return await self._property_command(
+                CommandID.PROP_VALUE_SET, property_id, value, **kwargs
+            )
+        except PropertyStatusError as exc:
+            # A successful SET of a property without a getter is answered with `OK`
+            if exc.status != Status.OK:
+                raise
+
+            return None
 
     async def _property_command(
         self,
