@@ -45,6 +45,8 @@ class PackedUInt21(int):
 
             if byte & 0b10000000 == 0:
                 break
+        else:
+            raise ValueError(f"Packed integer is truncated: {data!r}")
 
         n = 0
 

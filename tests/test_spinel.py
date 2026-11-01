@@ -469,8 +469,17 @@ def test_status_serialization(status, serialized):
     assert Status.deserialize(serialized + b"remainder") == (status, b"remainder")
 
 
-def test_packed_uint21_deserialization_failure():
-    """Test PackedUInt21 deserialization failure on oversized input."""
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"\x80\x80\x80\x80\x00",  # Oversized
+        b"",  # Empty
+        b"\x80",  # Truncated
+        b"\xff\xff",  # Truncated
+    ],
+)
+def test_packed_uint21_deserialization_failure(data):
+    """Test PackedUInt21 deserialization failure on oversized or truncated input."""
 
     with pytest.raises(ValueError):
-        PackedUInt21.deserialize(b"\x80\x80\x80\x80\x00")
+        PackedUInt21.deserialize(data)
